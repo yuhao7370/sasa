@@ -72,8 +72,7 @@ fn write_output<T: Sample + FromSample<f32>>(
             let right = stereo[1];
             frame[0] = left;
             frame[1] = right;
-            let surround = (left + right) * 0.5;
-            frame[2..].fill(surround);
+            frame[2..].fill(0.0);
         }
         out_scratch.as_slice()
     };
@@ -122,8 +121,7 @@ fn write_output_f32(
             let right = stereo[1];
             frame[0] = left;
             frame[1] = right;
-            let surround = (left + right) * 0.5;
-            frame[2..].fill(surround);
+            frame[2..].fill(0.0);
         }
     }
     tail.fill(0.0);
