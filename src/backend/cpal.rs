@@ -15,6 +15,7 @@ use super::{BackendSetup, State};
 
 #[derive(Debug, Clone, Default)]
 pub struct CpalSettings {
+    pub preferred_sample_rate: u32,
     pub buffer_size: Option<u32>,
 }
 
@@ -71,7 +72,6 @@ fn write_output<T: Sample + FromSample<f32>>(
     stereo_scratch: &mut Vec<f32>,
     out_scratch: &mut Vec<f32>,
 ) {
-    let channels = channels.max(1);
     let sample_count = data.len() / channels * channels;
     let (data, tail) = data.split_at_mut(sample_count);
     tail.fill(T::from_sample(0.0));
@@ -96,9 +96,7 @@ fn write_output_f32(
     info: &OutputCallbackInfo,
     stereo_scratch: &mut Vec<f32>,
 ) {
-    let channels = channels.max(1);
-    let frame_count = data.len() / channels;
-    let sample_count = frame_count * channels;
+    let sample_count = data.len() / channels * channels;
     let (data, tail) = data.split_at_mut(sample_count);
     tail.fill(0.0);
 
@@ -130,11 +128,22 @@ impl Backend for CpalBackend {
         let device = host
             .default_output_device()
             .ok_or_else(|| anyhow!("no default output device is found"))?;
-        let default_config = device
-            .default_output_config()
-            .context("cannot get output config")?;
-        let sample_format = default_config.sample_format();
-        let mut config = default_config.config();
+        let mut supported: Vec<_> = device
+            .supported_output_configs()
+            .context("cannot get supported output configs")?
+            .collect();
+        supported.sort_by(|a, b| b.cmp_default_heuristics(a));
+        let range = supported
+            .first()
+            .context("no supported output config is found")?;
+        let sample_rate = self
+            .settings
+            .preferred_sample_rate
+            .clamp(range.min_sample_rate(), range.max_sample_rate());
+        let supported_config = range.with_sample_rate(sample_rate);
+
+        let sample_format = supported_config.sample_format();
+        let mut config = supported_config.config();
         config.buffer_size = self
             .settings
             .buffer_size
