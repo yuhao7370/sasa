@@ -1,4 +1,5 @@
-use ringbuf::HeapConsumer;
+use std::sync::mpsc;
+
 use crate::Renderer;
 
 pub(crate) enum MixerCommand {
@@ -8,11 +9,11 @@ pub(crate) struct Mixer {
     pub(crate) sample_rate: u32,
 
     renderers: Vec<Box<dyn Renderer>>,
-    cons: HeapConsumer<MixerCommand>,
+    cons: mpsc::Receiver<MixerCommand>,
 }
 
 impl Mixer {
-    pub(crate) fn new(sample_rate: u32, cons: HeapConsumer<MixerCommand>) -> Self {
+    pub(crate) fn new(sample_rate: u32, cons: mpsc::Receiver<MixerCommand>) -> Self {
         Self {
             sample_rate,
 
@@ -22,7 +23,7 @@ impl Mixer {
     }
 
     fn consume_commands(&mut self) {
-        for cmd in self.cons.pop_iter() {
+        while let Ok(cmd) = self.cons.recv() {
             match cmd {
                 MixerCommand::AddRenderer(renderer) => self.renderers.push(renderer),
             }

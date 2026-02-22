@@ -1,9 +1,8 @@
 use crate::{buffer_is_full, AudioClip, Frame, Renderer};
 use anyhow::{Context, Result};
-use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
-    Arc, Weak,
+    mpsc, Arc, Weak,
 };
 
 #[derive(Debug, Clone)]
@@ -50,7 +49,7 @@ pub(crate) struct MusicRenderer {
     clip: AudioClip,
     settings: MusicParams,
     state: Weak<SharedState>,
-    cons: HeapConsumer<MusicCommand>,
+    rx: mpsc::Receiver<MusicCommand>,
     paused: bool,
     index: usize,
     last_sample_rate: u32,
@@ -69,18 +68,18 @@ impl MusicRenderer {
             self.fade_time = (self.fade_time as f32 * factor).round() as _;
             self.fade_current = (self.fade_current as f32 * factor).round() as _;
         }
-        for cmd in self.cons.pop_iter() {
+        while let Ok(cmd) = self.rx.recv() {
             match cmd {
                 MusicCommand::Pause => {
                     self.paused = true;
                     if let Some(state) = self.state.upgrade() {
-                        state.paused.store(true, Ordering::SeqCst);
+                        state.paused.store(true, Ordering::Relaxed);
                     }
                 }
                 MusicCommand::Resume => {
                     self.paused = false;
                     if let Some(state) = self.state.upgrade() {
-                        state.paused.store(false, Ordering::SeqCst);
+                        state.paused.store(false, Ordering::Relaxed);
                     }
                 }
                 MusicCommand::SetAmplifier(amp) => {
@@ -97,7 +96,7 @@ impl MusicRenderer {
                     if self.paused {
                         self.paused = false;
                         if let Some(state) = self.state.upgrade() {
-                            state.paused.store(false, Ordering::SeqCst);
+                            state.paused.store(false, Ordering::Relaxed);
                         }
                     }
                     self.fade_time = (time * sample_rate as f32).round() as _;
@@ -139,7 +138,7 @@ impl MusicRenderer {
                         self.fade_time = 0;
                         self.paused = true;
                         if let Some(state) = self.state.upgrade() {
-                            state.paused.store(true, Ordering::SeqCst);
+                            state.paused.store(true, Ordering::Relaxed);
                         }
                         return None;
                     } else {
@@ -195,7 +194,7 @@ impl Renderer for MusicRenderer {
             if let Some(state) = self.state.upgrade() {
                 state
                     .position
-                    .store(self.position(delta as f32).to_bits(), Ordering::SeqCst);
+                    .store(self.position(delta as f32).to_bits(), Ordering::Relaxed);
             }
         }
     }
@@ -218,25 +217,25 @@ impl Renderer for MusicRenderer {
             if let Some(state) = self.state.upgrade() {
                 state
                     .position
-                    .store(self.position(delta as f32).to_bits(), Ordering::SeqCst);
+                    .store(self.position(delta as f32).to_bits(), Ordering::Relaxed);
             }
         }
     }
 }
 
 pub struct Music {
-    arc: Arc<SharedState>,
-    prod: HeapProducer<MusicCommand>,
+    shared: Arc<SharedState>,
+    tx: mpsc::SyncSender<MusicCommand>,
 }
 impl Music {
     pub(crate) fn new(clip: AudioClip, settings: MusicParams) -> (Music, MusicRenderer) {
-        let (prod, cons) = HeapRb::new(settings.command_buffer_size).split();
+        let (tx, rx) = mpsc::sync_channel(settings.command_buffer_size);
         let arc = Arc::default();
         let renderer = MusicRenderer {
             clip,
             settings,
             state: Arc::downgrade(&arc),
-            cons,
+            rx,
             paused: true,
             index: 0,
             last_sample_rate: 1,
@@ -246,63 +245,63 @@ impl Music {
             fade_time: 0,
             fade_current: 0,
         };
-        (Self { arc, prod }, renderer)
+        (Self { shared: arc, tx }, renderer)
     }
 
     pub fn play(&mut self) -> Result<()> {
-        self.prod
-            .push(MusicCommand::Resume)
+        self.tx
+            .send(MusicCommand::Resume)
             .map_err(buffer_is_full)
             .context("play music")
     }
 
     pub fn pause(&mut self) -> Result<()> {
-        self.prod
-            .push(MusicCommand::Pause)
+        self.tx
+            .send(MusicCommand::Pause)
             .map_err(buffer_is_full)
             .context("pause")
     }
 
     pub fn paused(&mut self) -> bool {
-        self.arc.paused.load(Ordering::SeqCst)
+        self.shared.paused.load(Ordering::Relaxed)
     }
 
     pub fn set_amplifier(&mut self, amp: f32) -> Result<()> {
-        self.prod
-            .push(MusicCommand::SetAmplifier(amp))
+        self.tx
+            .send(MusicCommand::SetAmplifier(amp))
             .map_err(buffer_is_full)
             .context("set amplifier")
     }
 
     pub fn seek_to(&mut self, position: f32) -> Result<()> {
-        self.prod
-            .push(MusicCommand::SeekTo(position))
+        self.tx
+            .send(MusicCommand::SeekTo(position))
             .map_err(buffer_is_full)
             .context("seek to")
     }
 
     pub fn set_low_pass(&mut self, low_pass: f32) -> Result<()> {
-        self.prod
-            .push(MusicCommand::SetLowPass(low_pass))
+        self.tx
+            .send(MusicCommand::SetLowPass(low_pass))
             .map_err(buffer_is_full)
             .context("set low pass")
     }
 
     pub fn fade_in(&mut self, time: f32) -> Result<()> {
-        self.prod
-            .push(MusicCommand::FadeIn(time))
+        self.tx
+            .send(MusicCommand::FadeIn(time))
             .map_err(buffer_is_full)
             .context("fade in")
     }
 
     pub fn fade_out(&mut self, time: f32) -> Result<()> {
-        self.prod
-            .push(MusicCommand::FadeOut(time))
+        self.tx
+            .send(MusicCommand::FadeOut(time))
             .map_err(buffer_is_full)
             .context("fade out")
     }
 
     pub fn position(&self) -> f32 {
-        f32::from_bits(self.arc.position.load(Ordering::SeqCst))
+        f32::from_bits(self.shared.position.load(Ordering::Relaxed))
     }
 }

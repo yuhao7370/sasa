@@ -12,12 +12,11 @@ pub use renderer::{Music, MusicParams, PlaySfxParams, Renderer, Sfx};
 
 use crate::{backend::BackendSetup, mixer::MixerCommand};
 use anyhow::{anyhow, Context, Result};
-use ringbuf::{HeapProducer, HeapRb};
 use std::{
     ops::{Add, Mul},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        mpsc, Arc,
     },
 };
 
@@ -92,7 +91,7 @@ impl LatencyRecorder {
                     self.head.max(1)
                 }) as f32)
                 .to_bits(),
-            Ordering::SeqCst,
+            Ordering::Relaxed,
         );
     }
 }
@@ -100,7 +99,7 @@ impl LatencyRecorder {
 pub struct AudioManager {
     backend: Box<dyn Backend>,
     latency: Arc<AtomicU32>,
-    prod: HeapProducer<MixerCommand>,
+    tx: mpsc::SyncSender<MixerCommand>,
 }
 
 impl AudioManager {
@@ -109,18 +108,18 @@ impl AudioManager {
     }
 
     pub fn new_box(mut backend: Box<dyn Backend>) -> Result<Self> {
-        let (prod, cons) = HeapRb::new(16).split();
+        let (tx, rx) = mpsc::sync_channel(16);
         let latency = Arc::default();
         let latency_rec = LatencyRecorder::new(Arc::clone(&latency));
         backend.setup(BackendSetup {
-            mixer_cons: cons,
+            mixer_rx: rx,
             latency_rec,
         })?;
         backend.start()?;
         Ok(Self {
             backend,
             latency,
-            prod,
+            tx,
         })
     }
 
@@ -137,15 +136,15 @@ impl AudioManager {
     }
 
     pub fn add_renderer(&mut self, renderer: impl Renderer + 'static) -> Result<()> {
-        self.prod
-            .push(MixerCommand::AddRenderer(Box::new(renderer)))
+        self.tx
+            .send(MixerCommand::AddRenderer(Box::new(renderer)))
             .map_err(buffer_is_full)
             .context("add renderer")?;
         Ok(())
     }
 
     pub fn estimate_latency(&self) -> f32 {
-        f32::from_bits(self.latency.load(Ordering::SeqCst))
+        f32::from_bits(self.latency.load(Ordering::Relaxed))
     }
 
     #[inline(always)]

@@ -7,15 +7,16 @@ pub mod oboe;
 #[cfg(feature = "ohos")]
 pub mod ohos;
 
+use std::sync::mpsc;
+
 use crate::{
     mixer::{Mixer, MixerCommand},
     LatencyRecorder,
 };
 use anyhow::Result;
-use ringbuf::HeapConsumer;
 
 pub struct BackendSetup {
-    pub(crate) mixer_cons: HeapConsumer<MixerCommand>,
+    pub(crate) mixer_rx: mpsc::Receiver<MixerCommand>,
     pub(crate) latency_rec: LatencyRecorder,
 }
 
@@ -25,24 +26,16 @@ pub trait Backend {
     fn consume_broken(&self) -> bool;
 }
 
-#[repr(transparent)]
-struct StateCell {
-    _data: (Mixer, LatencyRecorder),
+struct State {
+    pub mixer: Mixer,
+    pub recorder: LatencyRecorder,
 }
 
-impl StateCell {
-    pub fn get(&self) -> &mut (Mixer, LatencyRecorder) {
-        #[allow(invalid_reference_casting)]
-        unsafe {
-            &mut *(self as *const StateCell as *const (Mixer, LatencyRecorder) as *mut _)
-        }
-    }
-}
-
-impl From<BackendSetup> for StateCell {
+impl From<BackendSetup> for State {
     fn from(value: BackendSetup) -> Self {
         Self {
-            _data: (Mixer::new(0, value.mixer_cons), value.latency_rec),
+            mixer: Mixer::new(0, value.mixer_rx),
+            recorder: value.latency_rec,
         }
     }
 }

@@ -1,6 +1,8 @@
 use crate::{buffer_is_full, AudioClip, Renderer};
 use anyhow::{Context, Result};
-use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
+use ringbuf::{
+    HeapCons, HeapProd, HeapRb, traits::{Consumer, Observer, Producer, Split}
+};
 use std::sync::{Arc, Weak};
 
 #[derive(Debug, Clone)]
@@ -16,7 +18,7 @@ impl Default for PlaySfxParams {
 pub(crate) struct SfxRenderer {
     clip: AudioClip,
     arc: Weak<()>,
-    cons: HeapConsumer<(f32, PlaySfxParams)>,
+    cons: HeapCons<(f32, PlaySfxParams)>,
 }
 
 impl Renderer for SfxRenderer {
@@ -38,9 +40,7 @@ impl Renderer for SfxRenderer {
                 *position += delta;
             }
         }
-        unsafe {
-            self.cons.advance(pop_count);
-        }
+        self.cons.skip(pop_count);
     }
 
     fn render_stereo(&mut self, sample_rate: u32, data: &mut [f32]) {
@@ -58,15 +58,13 @@ impl Renderer for SfxRenderer {
                 *position += delta;
             }
         }
-        unsafe {
-            self.cons.advance(pop_count);
-        }
+        self.cons.skip(pop_count);
     }
 }
 
 pub struct Sfx {
     _arc: Arc<()>,
-    prod: HeapProducer<(f32, PlaySfxParams)>,
+    prod: HeapProd<(f32, PlaySfxParams)>,
 }
 impl Sfx {
     pub(crate) fn new(clip: AudioClip, buffer_size: Option<usize>) -> (Sfx, SfxRenderer) {
@@ -82,7 +80,7 @@ impl Sfx {
 
     pub fn play(&mut self, params: PlaySfxParams) -> Result<()> {
         self.prod
-            .push((0., params))
+            .try_push((0., params))
             .map_err(buffer_is_full)
             .context("play sfx")
     }

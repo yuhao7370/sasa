@@ -9,8 +9,8 @@ use std::{
 };
 
 use ohos_audio_sys::{
-    OH_AudioInterrupt_ForceType, OH_AudioInterrupt_ForceType_AUDIOSTREAM_INTERRUPT_FORCE,
-    OH_AudioInterrupt_Hint, OH_AudioInterrupt_Hint_AUDIOSTREAM_INTERRUPT_HINT_PAUSE,
+    OH_AudioInterrupt_ForceType, OH_AudioInterrupt_Hint,
+    OH_AudioInterrupt_Hint_AUDIOSTREAM_INTERRUPT_HINT_PAUSE,
     OH_AudioInterrupt_Hint_AUDIOSTREAM_INTERRUPT_HINT_STOP, OH_AudioRenderer,
     OH_AudioRenderer_Callbacks, OH_AudioRenderer_GetSamplingRate, OH_AudioRenderer_Release,
     OH_AudioRenderer_Start, OH_AudioStreamBuilder, OH_AudioStreamBuilder_Create,
@@ -160,16 +160,16 @@ extern "C" fn audio_renderer_on_write_data(
     }
 
     let callback_data = unsafe { &mut *(user_data as *mut OhosCallbackData) };
-    let (mixer, _rec) = callback_data.state.get();
+    let mut guard = callback_data.state.get();
 
     let sample_count = length as usize / size_of::<f32>();
 
     let f32_buffer = unsafe { std::slice::from_raw_parts_mut(buffer as *mut f32, sample_count) };
 
     if callback_data.channels == 1 {
-        mixer.render_mono(f32_buffer);
+        guard.0.render_mono(f32_buffer);
     } else {
-        mixer.render_stereo(f32_buffer);
+        guard.0.render_stereo(f32_buffer);
     }
 
     0
@@ -178,7 +178,7 @@ extern "C" fn audio_renderer_on_write_data(
 extern "C" fn audio_renderer_on_interrupt(
     _renderer: *mut OH_AudioRenderer,
     user_data: *mut c_void,
-    force_type: OH_AudioInterrupt_ForceType,
+    _force_type: OH_AudioInterrupt_ForceType,
     hint: OH_AudioInterrupt_Hint,
 ) -> i32 {
     if user_data.is_null() {
