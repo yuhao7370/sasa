@@ -23,7 +23,7 @@ impl Mixer {
     }
 
     fn consume_commands(&mut self) {
-        while let Ok(cmd) = self.cons.recv() {
+        while let Ok(cmd) = self.cons.try_recv() {
             match cmd {
                 MixerCommand::AddRenderer(renderer) => self.renderers.push(renderer),
             }

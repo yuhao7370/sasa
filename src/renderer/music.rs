@@ -68,7 +68,7 @@ impl MusicRenderer {
             self.fade_time = (self.fade_time as f32 * factor).round() as _;
             self.fade_current = (self.fade_current as f32 * factor).round() as _;
         }
-        while let Ok(cmd) = self.rx.recv() {
+        while let Ok(cmd) = self.rx.try_recv() {
             match cmd {
                 MusicCommand::Pause => {
                     self.paused = true;
