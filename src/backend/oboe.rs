@@ -1,7 +1,8 @@
 pub use oboe::{PerformanceMode, Usage};
+use parking_lot::Mutex;
 
-use super::{BackendSetup, StateCell};
-use crate::Backend;
+use super::BackendSetup;
+use crate::{backend::State, Backend};
 use anyhow::Result;
 use oboe::{
     AudioOutputCallback, AudioOutputStreamSafe, AudioStream, AudioStreamAsync, AudioStreamBuilder,
@@ -30,7 +31,7 @@ impl Default for OboeSettings {
 pub struct OboeBackend {
     settings: OboeSettings,
     stream: Option<AudioStreamAsync<Output, OboeCallback>>,
-    state: Option<Arc<StateCell>>,
+    state: Option<Arc<Mutex<State>>>,
     broken: Arc<AtomicBool>,
 }
 
@@ -47,7 +48,7 @@ impl OboeBackend {
 
 impl Backend for OboeBackend {
     fn setup(&mut self, setup: BackendSetup) -> Result<()> {
-        self.state = Some(Arc::new(setup.into()));
+    self.state = Some(Arc::new(Mutex::new(setup.into())));
         Ok(())
     }
 
@@ -76,13 +77,17 @@ impl Backend for OboeBackend {
 }
 
 struct OboeCallback {
-    state: Arc<StateCell>,
+    state: Arc<Mutex<State>>,
     broken: Arc<AtomicBool>,
     buffer_size: Option<u32>,
 }
 
 impl OboeCallback {
-    pub fn new(state: Arc<StateCell>, broken: Arc<AtomicBool>, buffer_size: Option<u32>) -> Self {
+    pub fn new(
+        state: Arc<Mutex<State>>,
+        broken: Arc<AtomicBool>,
+        buffer_size: Option<u32>,
+    ) -> Self {
         Self {
             state,
             broken,
@@ -105,13 +110,13 @@ impl AudioOutputCallback for OboeCallback {
             );
         }
 
-        let (mixer, rec) = self.state.get();
+        let mut state = self.state.lock();
         if let Ok(latency) = stream.calculate_latency_millis() {
-            rec.push((latency / 1000.) as f32);
+            state.recorder.push((latency / 1000.) as f32);
         }
-        mixer.sample_rate = stream.get_sample_rate() as u32;
+        state.mixer.sample_rate = stream.get_sample_rate() as u32;
         let raw = frames.as_mut_ptr();
-        mixer.render_stereo(unsafe {
+        state.mixer.render_stereo(unsafe {
             std::slice::from_raw_parts_mut(raw as *mut f32, frames.len() * 2)
         });
 
