@@ -48,7 +48,7 @@ impl OboeBackend {
 
 impl Backend for OboeBackend {
     fn setup(&mut self, setup: BackendSetup) -> Result<()> {
-    self.state = Some(Arc::new(Mutex::new(setup.into())));
+        self.state = Some(Arc::new(Mutex::new(setup.into())));
         Ok(())
     }
 

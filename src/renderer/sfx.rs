@@ -1,7 +1,8 @@
 use crate::{buffer_is_full, AudioClip, Renderer};
 use anyhow::{Context, Result};
 use ringbuf::{
-    HeapCons, HeapProd, HeapRb, traits::{Consumer, Observer, Producer, Split}
+    traits::{Consumer, Observer, Producer, Split},
+    HeapCons, HeapProd, HeapRb,
 };
 use std::sync::{Arc, Weak};
 
