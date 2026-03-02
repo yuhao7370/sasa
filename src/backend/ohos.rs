@@ -23,9 +23,10 @@ use ohos_audio_sys::{
     OH_AudioStream_SampleFormat_AUDIOSTREAM_SAMPLE_F32LE,
     OH_AudioStream_Type_AUDIOSTREAM_TYPE_RENDERER, OH_AudioStream_Usage_AUDIOSTREAM_USAGE_GAME,
 };
+use parking_lot::Mutex;
 
-use super::{BackendSetup, StateCell};
-use crate::Backend;
+use super::BackendSetup;
+use crate::{backend::State, Backend};
 
 #[derive(Debug, Clone)]
 pub struct OhosSettings {
@@ -46,7 +47,7 @@ impl Default for OhosSettings {
 
 pub struct OhosBackend {
     settings: OhosSettings,
-    state: Option<Arc<StateCell>>,
+    state: Option<Arc<Mutex<State>>>,
     broken: Arc<AtomicBool>,
     stream: Option<*mut OH_AudioRenderer>,
 }
@@ -68,7 +69,7 @@ impl OhosBackend {
 
 impl Backend for OhosBackend {
     fn setup(&mut self, setup: BackendSetup) -> Result<()> {
-        self.state = Some(Arc::new(setup.into()));
+        self.state = Some(Arc::new(Mutex::new(setup.into())));
         Ok(())
     }
 
@@ -121,7 +122,7 @@ impl Backend for OhosBackend {
             OH_AudioStreamBuilder_Destroy(builder);
             let mut actual_sample_rate: i32 = 0;
             OH_AudioRenderer_GetSamplingRate(renderer, &mut actual_sample_rate);
-            self.state.as_ref().unwrap().get().0.sample_rate = actual_sample_rate as u32;
+            self.state.as_ref().unwrap().lock().mixer.sample_rate = actual_sample_rate as u32;
             OH_AudioRenderer_Start(renderer);
             self.stream = Some(renderer);
             Ok(())
@@ -134,13 +135,13 @@ impl Backend for OhosBackend {
 }
 
 struct OhosCallbackData {
-    state: Arc<StateCell>,
+    state: Arc<Mutex<State>>,
     broken: Arc<AtomicBool>,
     channels: u16,
 }
 
 impl OhosCallbackData {
-    fn new(state: Arc<StateCell>, broken: Arc<AtomicBool>, channels: u16) -> Self {
+    fn new(state: Arc<Mutex<State>>, broken: Arc<AtomicBool>, channels: u16) -> Self {
         Self {
             state,
             broken,
@@ -160,16 +161,16 @@ extern "C" fn audio_renderer_on_write_data(
     }
 
     let callback_data = unsafe { &mut *(user_data as *mut OhosCallbackData) };
-    let mut guard = callback_data.state.get();
+    let mut guard = callback_data.state.lock();
 
     let sample_count = length as usize / size_of::<f32>();
 
     let f32_buffer = unsafe { std::slice::from_raw_parts_mut(buffer as *mut f32, sample_count) };
 
     if callback_data.channels == 1 {
-        guard.0.render_mono(f32_buffer);
+        guard.mixer.render_mono(f32_buffer);
     } else {
-        guard.0.render_stereo(f32_buffer);
+        guard.mixer.render_stereo(f32_buffer);
     }
 
     0
