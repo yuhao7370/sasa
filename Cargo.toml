@@ -8,6 +8,7 @@ default = ["cpal"]
 cpal = ["dep:cpal"]
 oboe = ["dep:oboe"]
 ohos = ["dep:ohos-audio-sys"]
+webaudio = ["dep:wasm-bindgen", "dep:js-sys", "dep:web-sys"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -19,3 +20,24 @@ thiserror = "2.0.18"
 
 oboe = { version = "0.6.1", optional = true, features = ["shared-stdcxx"] }
 ohos-audio-sys = { version = "0.0.1", optional = true, features = ["api-20"] }
+
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+  "AudioContext",
+  "AudioContextState",
+  "AudioNode",
+  "AudioDestinationNode",
+  "AudioWorklet",
+  "AudioWorkletNode",
+  "MessagePort",
+  "Blob",
+  "BlobPropertyBag",
+  "Url",
+  "Performance",
+  "Worklet",
+  "Window",
+  "Document",
+  "EventTarget",
+  "console",
+] }

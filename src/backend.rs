@@ -7,6 +7,9 @@ pub mod oboe;
 #[cfg(feature = "ohos")]
 pub mod ohos;
 
+#[cfg(all(feature = "webaudio", target_arch = "wasm32"))]
+pub mod webaudio;
+
 use std::sync::mpsc;
 
 use crate::{
