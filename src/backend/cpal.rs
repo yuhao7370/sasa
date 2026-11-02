@@ -13,18 +13,10 @@ use std::sync::{
 
 use super::{BackendSetup, State};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CpalSettings {
-    pub preferred_sample_rate: u32,
+    pub preferred_sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
-}
-impl Default for CpalSettings {
-    fn default() -> Self {
-        Self {
-            preferred_sample_rate: 44100,
-            buffer_size: None,
-        }
-    }
 }
 
 pub struct CpalBackend {
@@ -147,7 +139,9 @@ impl Backend for CpalBackend {
         let sample_rate = self
             .settings
             .preferred_sample_rate
-            .clamp(range.min_sample_rate(), range.max_sample_rate());
+            .map_or(range.max_sample_rate(), |r| {
+                r.clamp(range.min_sample_rate(), range.max_sample_rate())
+            });
         let supported_config = range.with_sample_rate(sample_rate);
 
         let sample_format = supported_config.sample_format();
