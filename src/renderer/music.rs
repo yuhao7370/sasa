@@ -1,5 +1,5 @@
 use crate::{buffer_is_full, AudioClip, Frame, Renderer};
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     mpsc, Arc, Weak,
@@ -40,6 +40,7 @@ enum MusicCommand {
     Pause,
     Resume,
     SetAmplifier(f32),
+    SetPlaybackRate(f32),
     SeekTo(f32),
     SetLowPass(f32),
     FadeIn(f32),
@@ -84,6 +85,14 @@ impl MusicRenderer {
                 }
                 MusicCommand::SetAmplifier(amp) => {
                     self.settings.amplifier = amp;
+                }
+                MusicCommand::SetPlaybackRate(rate) => {
+                    // Keep the source position at this callback boundary. The
+                    // output-frame index depends on rate as well as sample rate.
+                    self.index = (self.index as f64 * self.settings.playback_rate as f64
+                        / rate as f64)
+                        .round() as usize;
+                    self.settings.playback_rate = rate;
                 }
                 MusicCommand::SeekTo(position) => {
                     self.index = (position * sample_rate as f32 / self.settings.playback_rate)
@@ -271,6 +280,19 @@ impl Music {
             .send(MusicCommand::SetAmplifier(amp))
             .map_err(buffer_is_full)
             .context("set amplifier")
+    }
+
+    /// Change speed at the next audio callback without pausing or seeking.
+    /// The source position, amplifier, filter, and active fade are preserved.
+    pub fn set_playback_rate(&mut self, rate: f32) -> Result<()> {
+        ensure!(
+            rate.is_finite() && rate > 0.,
+            "playback rate must be finite and positive"
+        );
+        self.tx
+            .send(MusicCommand::SetPlaybackRate(rate))
+            .map_err(buffer_is_full)
+            .context("set playback rate")
     }
 
     pub fn seek_to(&mut self, position: f32) -> Result<()> {
