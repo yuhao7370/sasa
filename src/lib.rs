@@ -18,6 +18,7 @@ use std::{
         atomic::{AtomicU32, Ordering},
         mpsc, Arc,
     },
+    time::{Duration, Instant},
 };
 
 fn buffer_is_full<E>(_: E) -> anyhow::Error {
@@ -96,10 +97,19 @@ impl LatencyRecorder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryStatus {
+    Ready,
+    Recovering,
+    Recovered,
+}
+
 pub struct AudioManager {
     backend: Box<dyn Backend>,
     latency: Arc<AtomicU32>,
     tx: mpsc::SyncSender<MixerCommand>,
+    recovery_pending: bool,
+    retry_after: Option<Instant>,
 }
 
 impl AudioManager {
@@ -120,6 +130,8 @@ impl AudioManager {
             backend,
             latency,
             tx,
+            recovery_pending: false,
+            retry_after: None,
         })
     }
 
@@ -137,7 +149,7 @@ impl AudioManager {
 
     pub fn add_renderer(&mut self, renderer: impl Renderer + 'static) -> Result<()> {
         self.tx
-            .send(MixerCommand::AddRenderer(Box::new(renderer)))
+            .try_send(MixerCommand::AddRenderer(Box::new(renderer)))
             .map_err(buffer_is_full)
             .context("add renderer")?;
         Ok(())
@@ -158,10 +170,36 @@ impl AudioManager {
     }
 
     pub fn recover_if_needed(&mut self) -> Result<()> {
-        if self.consume_broken() {
-            self.start()
-        } else {
-            Ok(())
+        self.poll_recovery().map(|_| ())
+    }
+
+    /// Poll even while paused. Failed opens remain pending and retry at most twice a second.
+    /// Errors describe an individual attempt, not a terminal playback failure.
+    pub fn poll_recovery(&mut self) -> Result<RecoveryStatus> {
+        self.backend.update();
+        self.recovery_pending |= self.consume_broken();
+        if self.backend.is_closing() {
+            return Ok(RecoveryStatus::Recovering);
+        }
+        if !self.recovery_pending {
+            return Ok(RecoveryStatus::Ready);
+        }
+        if self
+            .retry_after
+            .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return Ok(RecoveryStatus::Recovering);
+        }
+        match self.backend.start() {
+            Ok(()) => {
+                self.recovery_pending = false;
+                self.retry_after = None;
+                Ok(RecoveryStatus::Recovered)
+            }
+            Err(error) => {
+                self.retry_after = Some(Instant::now() + Duration::from_millis(500));
+                Err(error)
+            }
         }
     }
 }

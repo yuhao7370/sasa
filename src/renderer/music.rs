@@ -259,14 +259,14 @@ impl Music {
 
     pub fn play(&mut self) -> Result<()> {
         self.tx
-            .send(MusicCommand::Resume)
+            .try_send(MusicCommand::Resume)
             .map_err(buffer_is_full)
             .context("play music")
     }
 
     pub fn pause(&mut self) -> Result<()> {
         self.tx
-            .send(MusicCommand::Pause)
+            .try_send(MusicCommand::Pause)
             .map_err(buffer_is_full)
             .context("pause")
     }
@@ -277,7 +277,7 @@ impl Music {
 
     pub fn set_amplifier(&mut self, amp: f32) -> Result<()> {
         self.tx
-            .send(MusicCommand::SetAmplifier(amp))
+            .try_send(MusicCommand::SetAmplifier(amp))
             .map_err(buffer_is_full)
             .context("set amplifier")
     }
@@ -290,35 +290,35 @@ impl Music {
             "playback rate must be finite and positive"
         );
         self.tx
-            .send(MusicCommand::SetPlaybackRate(rate))
+            .try_send(MusicCommand::SetPlaybackRate(rate))
             .map_err(buffer_is_full)
             .context("set playback rate")
     }
 
     pub fn seek_to(&mut self, position: f32) -> Result<()> {
         self.tx
-            .send(MusicCommand::SeekTo(position))
+            .try_send(MusicCommand::SeekTo(position))
             .map_err(buffer_is_full)
             .context("seek to")
     }
 
     pub fn set_low_pass(&mut self, low_pass: f32) -> Result<()> {
         self.tx
-            .send(MusicCommand::SetLowPass(low_pass))
+            .try_send(MusicCommand::SetLowPass(low_pass))
             .map_err(buffer_is_full)
             .context("set low pass")
     }
 
     pub fn fade_in(&mut self, time: f32) -> Result<()> {
         self.tx
-            .send(MusicCommand::FadeIn(time))
+            .try_send(MusicCommand::FadeIn(time))
             .map_err(buffer_is_full)
             .context("fade in")
     }
 
     pub fn fade_out(&mut self, time: f32) -> Result<()> {
         self.tx
-            .send(MusicCommand::FadeOut(time))
+            .try_send(MusicCommand::FadeOut(time))
             .map_err(buffer_is_full)
             .context("fade out")
     }

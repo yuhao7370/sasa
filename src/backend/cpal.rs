@@ -13,6 +13,9 @@ use std::sync::{
 
 use super::{BackendSetup, State};
 
+#[cfg(target_os = "windows")]
+mod windows_route;
+
 #[derive(Debug, Clone, Default)]
 pub struct CpalSettings {
     pub preferred_sample_rate: Option<u32>,
@@ -24,6 +27,8 @@ pub struct CpalBackend {
     stream: Option<Stream>,
     broken: Arc<AtomicBool>,
     state: Option<Arc<Mutex<State>>>,
+    #[cfg(target_os = "windows")]
+    route_monitor: Option<windows_route::DefaultOutputMonitor>,
 }
 
 impl CpalBackend {
@@ -33,6 +38,8 @@ impl CpalBackend {
             stream: None,
             broken: Arc::default(),
             state: None,
+            #[cfg(target_os = "windows")]
+            route_monitor: None,
         }
     }
 }
@@ -124,10 +131,21 @@ impl Backend for CpalBackend {
     }
 
     fn start(&mut self) -> Result<()> {
+        // A mixer must never be advanced by two output callbacks during a route change.
+        drop(self.stream.take());
         let host = cpal::default_host();
         let device = host
             .default_output_device()
             .ok_or_else(|| anyhow!("no default output device is found"))?;
+        #[cfg(target_os = "windows")]
+        if self.route_monitor.is_none() {
+            self.route_monitor = Some(windows_route::DefaultOutputMonitor::new(
+                device
+                    .id()
+                    .context("cannot identify default output device")?,
+                Arc::clone(&self.broken),
+            )?);
+        }
         let mut supported: Vec<_> = device
             .supported_output_configs()
             .context("cannot get supported output configs")?
@@ -155,64 +173,78 @@ impl Backend for CpalBackend {
         let state = Arc::clone(self.state.as_ref().unwrap());
         state.lock().mixer.sample_rate = config.sample_rate;
 
-        macro_rules! build_stream {
-            ($sample_ty:ty) => {{
-                let state = Arc::clone(&state);
-                let mut stereo_scratch = Vec::new();
-                let mut out_scratch = Vec::new();
-                device.build_output_stream(
-                    &config,
-                    move |data: &mut [$sample_ty], info: &OutputCallbackInfo| {
-                        write_output(
-                            &mut state.lock(),
-                            channels,
-                            data,
-                            info,
-                            &mut stereo_scratch,
-                            &mut out_scratch,
-                        );
-                    },
-                    make_error_callback(Arc::clone(&self.broken)),
-                    None,
-                )
-            }};
-        }
-
-        let stream = match sample_format {
-            SampleFormat::I8 => build_stream!(i8),
-            SampleFormat::I16 => build_stream!(i16),
-            SampleFormat::I24 => build_stream!(I24),
-            SampleFormat::I32 => build_stream!(i32),
-            SampleFormat::I64 => build_stream!(i64),
-            SampleFormat::U8 => build_stream!(u8),
-            SampleFormat::U16 => build_stream!(u16),
-            SampleFormat::U24 => build_stream!(U24),
-            SampleFormat::U32 => build_stream!(u32),
-            SampleFormat::U64 => build_stream!(u64),
-            SampleFormat::F32 => {
-                let state = Arc::clone(&state);
-                let mut stereo_scratch = Vec::new();
-                device.build_output_stream(
-                    &config,
-                    move |data: &mut [f32], info: &OutputCallbackInfo| {
-                        write_output_f32(
-                            &mut state.lock(),
-                            channels,
-                            data,
-                            info,
-                            &mut stereo_scratch,
-                        );
-                    },
-                    make_error_callback(Arc::clone(&self.broken)),
-                    None,
-                )
+        let build = |config: &cpal::StreamConfig| {
+            macro_rules! build_stream {
+                ($sample_ty:ty) => {{
+                    let state = Arc::clone(&state);
+                    let mut stereo_scratch = Vec::new();
+                    let mut out_scratch = Vec::new();
+                    device.build_output_stream(
+                        config,
+                        move |data: &mut [$sample_ty], info: &OutputCallbackInfo| {
+                            write_output(
+                                &mut state.lock(),
+                                channels,
+                                data,
+                                info,
+                                &mut stereo_scratch,
+                                &mut out_scratch,
+                            );
+                        },
+                        make_error_callback(Arc::clone(&self.broken)),
+                        None,
+                    )
+                }};
             }
-            SampleFormat::F64 => build_stream!(f64),
-            _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
+
+            match sample_format {
+                SampleFormat::I8 => build_stream!(i8),
+                SampleFormat::I16 => build_stream!(i16),
+                SampleFormat::I24 => build_stream!(I24),
+                SampleFormat::I32 => build_stream!(i32),
+                SampleFormat::I64 => build_stream!(i64),
+                SampleFormat::U8 => build_stream!(u8),
+                SampleFormat::U16 => build_stream!(u16),
+                SampleFormat::U24 => build_stream!(U24),
+                SampleFormat::U32 => build_stream!(u32),
+                SampleFormat::U64 => build_stream!(u64),
+                SampleFormat::F32 => {
+                    let state = Arc::clone(&state);
+                    let mut stereo_scratch = Vec::new();
+                    device.build_output_stream(
+                        config,
+                        move |data: &mut [f32], info: &OutputCallbackInfo| {
+                            write_output_f32(
+                                &mut state.lock(),
+                                channels,
+                                data,
+                                info,
+                                &mut stereo_scratch,
+                            );
+                        },
+                        make_error_callback(Arc::clone(&self.broken)),
+                        None,
+                    )
+                }
+                SampleFormat::F64 => build_stream!(f64),
+                _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
+            }
+        };
+        let stream = match build(&config) {
+            Err(error) if matches!(config.buffer_size, BufferSize::Fixed(_)) => {
+                eprintln!("[audio/cpal] fixed buffer rejected ({error}); using device default");
+                config.buffer_size = BufferSize::Default;
+                build(&config)
+            }
+            result => result,
         }
         .context("failed to build stream")?;
 
         stream.play()?;
+        eprintln!(
+            "[audio/cpal] output started: rate={} channels={} buffer={:?}",
+            config.sample_rate, config.channels, config.buffer_size
+        );
         self.stream = Some(stream);
         Ok(())
     }

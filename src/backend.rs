@@ -24,6 +24,14 @@ pub trait Backend {
     fn setup(&mut self, setup: BackendSetup) -> Result<()>;
     fn start(&mut self) -> Result<()>;
     fn consume_broken(&self) -> bool;
+
+    /// Service non-realtime diagnostics on the manager's owning thread.
+    fn update(&mut self) {}
+
+    /// A disconnected stream may still be closing on its backend's error thread.
+    fn is_closing(&self) -> bool {
+        false
+    }
 }
 
 struct State {
